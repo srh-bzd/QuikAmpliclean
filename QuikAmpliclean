@@ -1,0 +1,275 @@
+#!/bin/bash
+
+<<COMMENT
+	USAGE : 
+		./QuikAmpliclean -f <input_directory> -o <output_directory> -p <file_with_primers> -r <file_with_primers_rc> [-i <min-seq-length>] [-a <max-seq-length>] [-c <cutadapt-output>] [-p <threads>]
+	DESCRIPTION : 
+		QuikAmpliclean is a pipeline to keep only amplicons where, first, the correct combinations of primers have been found and removed and, second, which have an expected length.
+	PREREQUISITE :
+		* Files :
+			- python script used into this pipeline (find_and_remove_primers.py, keep_sequences_by_length.py)
+		* Tools :
+			- Cutadapt (https://cutadapt.readthedocs.io/en/stable/index.html)
+			- Python3 
+		* Python packages :
+			- os
+			- argparse
+			- sys
+	AUTHOR :
+        Sarah BOUZIDI
+        Engineer in bioinformatics
+        Centre National de la Recherche Scientifique (CNRS)
+        Laboratory MIVEGEC, IRD, Montpellier
+COMMENT
+
+
+# Exit if a command exits with a non zero status
+set -e
+
+
+
+########################################################################################
+#                                    DEFINE VARIABLES 
+########################################################################################
+
+# Directory of supplementary scripts
+DIRSCRIPTS="$(dirname $0)"/src
+
+# Minimum sequences length by default
+MINSEQLENGTH=70
+
+# Maximum sequences length by default
+MAXSEQLENGTH=150
+
+# Threads
+THREADS=1
+
+
+
+########################################################################################
+#                                    PARSE COMMAND LINE
+########################################################################################
+
+function header(){
+    printf "QuikAmpliclean\n"
+    printf "2022 - Sarah Bouzidi <sarah.bouzidi@ird.fr>\n"
+}
+
+### USAGE OF THE PIPELINE
+function usage(){
+	header
+	printf "\nUsage :\n"
+	printf "./QuikAmpliclean -f <input_directory> -o <output_directory> -p <file_with_primers> -r <file_with_primers_rc> [-i <min-seq-length>] [-a <max-seq-length>] [-p <threads>]s\n"
+	
+	printf "\nAbout :\n"
+	printf "QuikAmpliclean is a pipeline to keep only amplicons where, first, the correct combinations of primers have been found and removed and, second, which have an expected length.\n"
+	
+	printf "\nMandatory options :\n"
+	printf "\t-f, --input-dir           : Path of the directory where all the FASTQ 
+				    files, not compressed, to treat are;\n\n"
+
+	printf "\t-o, --output-dir          : Path and name of the output directory 
+				    were all results will written. 
+				    If he doesn't exist, it will be created;\n\n"
+	
+	printf "\t-p, --file_with_primers   : FASTA file with primers.
+				    WARNING : The ids of primers must end with
+				    '_F' and '_R';\n\n"
+	
+	printf "\t-p, --file_with_primers_rc: FASTA file with primers reverse-complemented.
+				    WARNING : The ids of primers must end with
+				    '_F_RC' and '_R_RC';\n"
+	
+	printf "\nSupplementary options :\n"
+	printf "\t-i, --min-seq-length      : The minimum length of a sequence to be kept.
+				    Default : 70;\n\n"
+	
+	printf "\t-a, --max-seq-length      : The maximum length of a sequence to be kept.
+				    Default : 150;\n\n"
+	
+	printf "\t-p, --threads             : Number of threads to use.
+				    Default : 1;\n\n"
+
+	printf "\t-h, --help                : Help;\n"
+}
+
+# Print usage if there is just the name of the script in command line
+if [ $# -eq 0 ]
+then
+	usage
+	exit
+fi
+
+# Read the options (":" after an argument (i.e f and p) --> argument requiered value, nothing after an argument (i.e m and h) --> argument don't requiered value)
+TEMP=`getopt -o f:p:r:i:a:p:o:h --long input-dir:,file_with_primers:,file_with_primers_rc:,min-seq-length:,max-seq-length:,threads:,output-dir:,help -- "$@"`
+eval set -- "$TEMP"
+
+# Extract options and their arguments into variables
+while true
+do
+	case $1 in
+		-f|--input-dir)
+			INPUTDIR=$2; shift 2;;
+		-p|--file_with_primers)
+			PRIMERS=$2; shift 2;;
+		-r|--file_with_primers_rc)
+			PRIMERS_RC=$2; shift 2;;
+		-i|--min-seq-length)
+			MINSEQLENGTH=$2; shift 2;;
+		-a|--max-seq-length)
+			MAXSEQLENGTH=$2; shift 2;;
+		-p|--threads)
+			THREADS=$2; shift 2;;
+		-o|--output-dir)
+			OUTPUTDIR=$2; shift 2;;
+		-h|--help) usage;
+			exit 0;;
+		--) shift; break;;
+		*) break;;
+	esac
+done
+
+
+
+########################################################################################
+#                                    VERIFICATION
+########################################################################################
+
+### CHECK IF MANDATORY ARGUMENTS ARE NOT NULL
+if [ -z "$INPUTDIR" ] || [ -z "$OUTPUTDIR" ] || [ -z "$PRIMERS" ] || [ -z "$PRIMERS_RC" ]
+then
+    echo -e "QuikAmpliclean : warning : You must enter all the mandatory arguments"
+    echo -e "Use \"QuikAmpliclean --help\" to see all command-line options."
+fi
+
+
+### CHECK IF THE USER ENTER THE WRITE SYNTHAX FOR THE OPTIONNAL ARGUMENT 
+# Minimum sequences length
+if ! [[ $MINSEQLENGTH =~ ^[0-9]+$ ]]
+then 
+    echo -e "QuikAmpliclean : warning : The value of minimum sequences length must be an integer"
+    exit
+fi
+# Maximum sequences length
+if ! [[ $MAXSEQLENGTH =~ ^[0-9]+$ ]]
+then 
+    echo -e "QuikAmpliclean : warning : The value of maximum sequences length must be an integer"
+    exit
+fi
+# Threads
+if ! [[ $THREADS =~ ^[0-9]+$ ]]
+then 
+    echo -e "QuikAmpliclean : warning : The value of threads must be an integer"
+    exit
+fi
+
+
+### CHECK IF THE INPUT FILES DIRECTORY EXISTS
+if [ ! -d "$INPUTDIR" ]
+then
+	echo -e "QuikAmpliclean : error : The input file directory ${INPUTDIR} doesn't exist"
+	exit
+fi
+
+
+### CHECK IF THERE IS AT LEAST ONE FASTQ FILE INTO THE INPUT DIRECTORY
+NBFASTQFILE=`ls -1 "$INPUTDIR"/*.f*q 2>/dev/null | wc -l`
+if [ $NBFASTQFILE = 0 ]
+then 
+	echo -e "QuikAmpliclean : error :  There is no FASTQ file into the directory ${INPUTDIR}"
+	exit
+fi 
+
+
+### CHECK IF THE FILES WITH PRIMERS EXISTS
+if [ ! -f "$PRIMERS" ]
+then
+	echo -e "QuikAmpliclean : error : The input file ${PRIMERS} doesn't exist"
+	exit
+fi
+if [ ! -f "$PRIMERS_RC" ]
+then
+	echo -e "QuikAmpliclean : error : The input file ${PRIMERS_RC} doesn't exist"
+	exit
+fi
+
+
+### CHECK IF TOOLS ARE AVAILABLE
+if ! [ -x "$(command -v python3 --version)" ]
+then
+    echo -e "QuikAmpliclean: warning : Python3 is needed"
+	exit
+fi
+if ! [ -x "$(command -v cutadapt --version)" ]
+then
+    echo -e "QuikAmpliclean: warning : Cutadapt is needed"
+	exit
+fi
+
+
+# PRINT HEADER AND COMMAND LINE AFTER ALL VERIFICATIONS IF THERE ARE OK 
+header
+echo -e "\nQuikAmpliclean : Start with the command-line :"
+echo -e "$(dirname $0)/QuikAmpliclean -f ${INPUTDIR} -o ${OUTPUTDIR} -p ${PRIMERS} -r ${PRIMERS_RC} -i ${MINSEQLENGTH} -a ${MAXSEQLENGTH} -c ${KEEPCUTADAPTOUTPUT} -p ${THREADS} \n"
+
+
+
+########################################################################################
+#                                    CREATION
+########################################################################################
+
+### CREATE OUTPUT DIR IF DOESN'T EXIST
+mkdir -p "$OUTPUTDIR"
+mkdir -p "$OUTPUTDIR"/log
+mkdir -p "$OUTPUTDIR"/output
+mkdir -p "$OUTPUTDIR"/tmp
+
+
+### CREATE AN ARRAY WITH ALL NAMES OF THE INPUT FILES
+declare -a FILES_NAMES
+for file in "$INPUTDIR"/*.f*q
+	do
+		file_without_path=${file##*/}
+		file_without_extension=${file_without_path%.f*}
+		FILES_NAMES+=("$file_without_extension")
+	done
+
+# Sort the array alphanumerically
+IFS=$'\n' FILES_NAMES=($(sort -V <<<"${FILES_NAMES[*]}"))
+unset IFS	
+
+
+### CREATE LOG FILES
+# Add first line to the text file containing counts of sequences rejected after cutadapt
+echo -e 'SAMPLE\tNUMBER_INPUT_SEQ\tNUMBER_SEQ_WITH_PRIMERS\tNUMBER_SEQ_WO_PRIMER\tNUMBER_SEQ_WITH_ONE_PRIMER\tNUMBER_SEQ_WRONG_PRIMERS' > "$OUTPUTDIR"/log/primers.count.txt
+
+# Add first line to the text file containing sequences rejected after discriminate by length
+echo -e 'SAMPLE\tNUMBER_SEQ_EXPECT_LENGTH\tNUMBER_SEQ_TOO_SHORT\tNUMBER_SEQ_TOO_LONG' > "$OUTPUTDIR"/log/length.count.txt
+
+
+########################################################################################
+#                                    CLEANING
+########################################################################################
+
+for file_name in ${FILES_NAMES[@]}
+	do 
+		echo -e "------------------------$file_name--------------------------"
+		
+		echo -e "\n*---------- FIND PRIMERS AND TRIM"
+		cutadapt -g file:"$PRIMERS" -a file:"$PRIMERS_RC" --times 2 -j "$THREADS" --info-file "$OUTPUTDIR"/tmp/"$file_name"_sequences_with_info.log -o "$OUTPUTDIR"/tmp/"$file_name".fastq "$INPUTDIR"/"$file_name".f*q &> "$OUTPUTDIR"/tmp/"$file_name""_cutadapt.log"
+		# Remove Cutadapt log
+		rm "$OUTPUTDIR"/tmp/"$file_name""_cutadapt.log"
+
+		echo -e "\n*---------- KEEP SEQUENCES WITH PRIMERS"
+		python3 "$DIRSCRIPTS"/find_and_remove_primers.py "$OUTPUTDIR"/tmp/"$file_name".f*q "$OUTPUTDIR"/tmp/"$file_name"_sequences_with_info.log "$OUTPUTDIR"/tmp/"$file_name"_with_primers.fastq --output_log "$OUTPUTDIR"/log/"$file_name".log --output_counts "$OUTPUTDIR"/log/primers.count.txt
+
+		echo -e "\n*---------- KEEP SEQUENCES WITH AN EXPECTED LENGTH"
+		python3 "$DIRSCRIPTS"/keep_sequences_by_length.py "$OUTPUTDIR"/tmp/"$file_name"_with_primers.fastq "$MINSEQLENGTH" "$MAXSEQLENGTH" "$OUTPUTDIR"/output/"$file_name".fastq --output_log "$OUTPUTDIR"/log/"$file_name".log --output_counts "$OUTPUTDIR"/log/length.count.txt
+		# Remove tmp files
+		rm "$OUTPUTDIR"/tmp/"$file_name"*
+
+		echo -e "------------------------------------------------------------"
+	done
+
+# Remove tmp directory
+rm -r "$OUTPUTDIR"/tmp
