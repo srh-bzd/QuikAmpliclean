@@ -2,7 +2,7 @@
 
 <<COMMENT
 	USAGE : 
-		./QuikAmpliclean -f <input_directory> -o <output_directory> -p <file_with_primers> -r <file_with_primers_rc> [-i <min-seq-length>] [-a <max-seq-length>] [-c <cutadapt-output>] [-p <threads>]
+		./QuikAmpliclean -f <input-dir> -o <output-dir> -p <file-with-primers> -r <file-with-primers-rc> [-c <yes|no>] [-i <min-seq-length>] [-a <max-seq-length>] [-t <threads>]
 	DESCRIPTION : 
 		QuikAmpliclean is a pipeline to keep only amplicons where, first, the correct combinations of primers have been found and removed and, second, which have an expected length.
 	PREREQUISITE :
@@ -35,6 +35,9 @@ set -e
 # Directory of supplementary scripts
 DIRSCRIPTS="$(dirname $0)"/src
 
+# Reverse complement
+REVERSECOMPLEMENT="no"
+
 # Minimum sequences length by default
 MINSEQLENGTH=70
 
@@ -59,7 +62,7 @@ function header(){
 function usage(){
 	header
 	printf "\nUsage :\n"
-	printf "./QuikAmpliclean -f <input_directory> -o <output_directory> -p <file_with_primers> -r <file_with_primers_rc> [-i <min-seq-length>] [-a <max-seq-length>] [-p <threads>]s\n"
+	printf "./QuikAmpliclean -f <input_directory> -o <output_directory> -p <file-with-primers> -r <file-with-primers-rc> [-c <yes|no>] [-i <min-seq-length>] [-a <max-seq-length>] [-t <threads>]s\n"
 	
 	printf "\nAbout :\n"
 	printf "QuikAmpliclean is a pipeline to keep only amplicons where, first, the correct combinations of primers have been found and removed and, second, which have an expected length.\n"
@@ -72,22 +75,27 @@ function usage(){
 				    were all results will written. 
 				    If he doesn't exist, it will be created;\n\n"
 	
-	printf "\t-p, --file_with_primers   : FASTA file with primers.
+	printf "\t-p, --file-with-primers   : FASTA file with primers.
 				    WARNING : The ids of primers must end with
 				    '_F' and '_R';\n\n"
 	
-	printf "\t-p, --file_with_primers_rc: FASTA file with primers reverse-complemented.
+	printf "\t-r, --file-with-primers-rc: FASTA file with primers reverse-complemented.
 				    WARNING : The ids of primers must end with
 				    '_F_RC' and '_R_RC';\n"
 	
 	printf "\nSupplementary options :\n"
+	printf "\t-c, --reverse-complement  : Reverse-complement sequences with correct
+				    combinations of primers and begin with 
+				    the reverse primer. yes or no value. 
+				    Default : no;\n\n"
+
 	printf "\t-i, --min-seq-length      : The minimum length of a sequence to be kept.
 				    Default : 70;\n\n"
 	
 	printf "\t-a, --max-seq-length      : The maximum length of a sequence to be kept.
 				    Default : 150;\n\n"
 	
-	printf "\t-p, --threads             : Number of threads to use.
+	printf "\t-t, --threads             : Number of threads to use.
 				    Default : 1;\n\n"
 
 	printf "\t-h, --help                : Help;\n"
@@ -101,7 +109,7 @@ then
 fi
 
 # Read the options (":" after an argument (i.e f and p) --> argument requiered value, nothing after an argument (i.e m and h) --> argument don't requiered value)
-TEMP=`getopt -o f:p:r:i:a:p:o:h --long input-dir:,file_with_primers:,file_with_primers_rc:,min-seq-length:,max-seq-length:,threads:,output-dir:,help -- "$@"`
+TEMP=`getopt -o f:p:r:c:i:a:t:o:h --long input-dir:,file-with-primers:,file-with-primers-rc:,reverse-complement:,min-seq-length:,max-seq-length:,threads:,output-dir:,help -- "$@"`
 eval set -- "$TEMP"
 
 # Extract options and their arguments into variables
@@ -110,15 +118,17 @@ do
 	case $1 in
 		-f|--input-dir)
 			INPUTDIR=$2; shift 2;;
-		-p|--file_with_primers)
+		-p|--file-with-primers)
 			PRIMERS=$2; shift 2;;
-		-r|--file_with_primers_rc)
+		-r|--file-with-primers-rc)
 			PRIMERS_RC=$2; shift 2;;
 		-i|--min-seq-length)
 			MINSEQLENGTH=$2; shift 2;;
+		-c|--reverse-complement)
+			REVERSECOMPLEMENT=$2; shift 2;;
 		-a|--max-seq-length)
 			MAXSEQLENGTH=$2; shift 2;;
-		-p|--threads)
+		-t|--threads)
 			THREADS=$2; shift 2;;
 		-o|--output-dir)
 			OUTPUTDIR=$2; shift 2;;
@@ -144,6 +154,13 @@ fi
 
 
 ### CHECK IF THE USER ENTER THE WRITE SYNTHAX FOR THE OPTIONNAL ARGUMENT 
+# Reverse complement
+if [[ "$REVERSECOMPLEMENT" != "yes" && "$REVERSECOMPLEMENT" != "no" ]]
+then 
+	echo -e "QuikAmpliclean : warning : You have to write yes or no for the reverse-complement option"
+	exit
+fi
+
 # Minimum sequences length
 if ! [[ $MINSEQLENGTH =~ ^[0-9]+$ ]]
 then 
@@ -210,7 +227,7 @@ fi
 # PRINT HEADER AND COMMAND LINE AFTER ALL VERIFICATIONS IF THERE ARE OK 
 header
 echo -e "\nQuikAmpliclean : Start with the command-line :"
-echo -e "$(dirname $0)/QuikAmpliclean -f ${INPUTDIR} -o ${OUTPUTDIR} -p ${PRIMERS} -r ${PRIMERS_RC} -i ${MINSEQLENGTH} -a ${MAXSEQLENGTH} -c ${KEEPCUTADAPTOUTPUT} -p ${THREADS} \n"
+echo -e "$(dirname $0)/QuikAmpliclean -f ${INPUTDIR} -o ${OUTPUTDIR} -p ${PRIMERS} -r ${PRIMERS_RC} -c ${REVERSECOMPLEMENT} -i ${MINSEQLENGTH} -a ${MAXSEQLENGTH} -t ${THREADS} \n"
 
 
 
@@ -261,7 +278,7 @@ for file_name in ${FILES_NAMES[@]}
 		rm "$OUTPUTDIR"/tmp/"$file_name""_cutadapt.log"
 
 		echo -e "\n*---------- KEEP SEQUENCES WITH PRIMERS"
-		python3 "$DIRSCRIPTS"/find_and_remove_primers.py "$OUTPUTDIR"/tmp/"$file_name".f*q "$OUTPUTDIR"/tmp/"$file_name"_sequences_with_info.log "$OUTPUTDIR"/tmp/"$file_name"_with_primers.fastq --output_log "$OUTPUTDIR"/log/"$file_name".log --output_counts "$OUTPUTDIR"/log/primers.count.txt
+		python3 "$DIRSCRIPTS"/find_and_remove_primers.py "$OUTPUTDIR"/tmp/"$file_name".f*q "$OUTPUTDIR"/tmp/"$file_name"_sequences_with_info.log "$OUTPUTDIR"/tmp/"$file_name"_with_primers.fastq --reverse_complement "$REVERSECOMPLEMENT" --output_log "$OUTPUTDIR"/log/"$file_name".log --output_counts "$OUTPUTDIR"/log/primers.count.txt
 
 		echo -e "\n*---------- KEEP SEQUENCES WITH AN EXPECTED LENGTH"
 		python3 "$DIRSCRIPTS"/keep_sequences_by_length.py "$OUTPUTDIR"/tmp/"$file_name"_with_primers.fastq "$MINSEQLENGTH" "$MAXSEQLENGTH" "$OUTPUTDIR"/output/"$file_name".fastq --output_log "$OUTPUTDIR"/log/"$file_name".log --output_counts "$OUTPUTDIR"/log/length.count.txt
