@@ -4,7 +4,7 @@ import os, argparse, sys
 
 """
 USAGE
-    ./find_and_remove_primers.py [-h] <fastq_file> <cutadapt_info_file> <output_file> [-i <output_log>] [-c <output_counts>]
+    ./find_and_remove_primers.py [-h] <fastq_file> <cutadapt_info_file> <output_file> [-r <yes|no>] [-i <output_log>] [-c <output_counts>]
 DESCRIPTION
     find_and_remove_primers.py is a script to keep sequences where the correct combinations of primers have been found and removed.
 PREREQUISITE
@@ -70,16 +70,23 @@ def parse_cutadapt_log(cutadapt_file):
     return seqGoodPrimersDict, seqWrongPrimersDict
 
 
-def write_output_files(fastqDict, seqGoodPrimersDict, seqWrongPrimersDict, output_file, output_log, output_counts):
+def write_output_files(fastqDict, seqGoodPrimersDict, seqWrongPrimersDict, output_file, reverse_complement, output_log, output_counts):
     """
     Write the new FASTQ file with sequences saved and log files : 1/ with id of sequences not saved, 2/ with counts of sequences not saved
     """
     # File with saved sequences
     for seqId in seqGoodPrimersDict.keys():
-        print("@"+seqId, file=output_file)
-        print(fastqDict[seqId]["seq"], file=output_file)
-        print("+", file=output_file)
-        print(fastqDict[seqId]["qual"], file=output_file)
+        if (seqGoodPrimersDict[seqId][0].endswith("_R") and reverse_complement == "yes"):
+            comp = fastqDict[seqId]["seq"].maketrans('ATGC', 'TACG')
+            print("@"+seqId, file=output_file)
+            print(fastqDict[seqId]["seq"].translate(comp)[::-1], file=output_file)
+            print("+", file=output_file)
+            print(fastqDict[seqId]["qual"][::-1], file=output_file)
+        else:
+            print("@"+seqId, file=output_file)
+            print(fastqDict[seqId]["seq"], file=output_file)
+            print("+", file=output_file)
+            print(fastqDict[seqId]["qual"], file=output_file)
     # Log files
     # id
     print("*---------- Sequences where there isn't any primer ("+str(len(seqWrongPrimersDict["without"]))+") : ", file=output_log)
@@ -101,10 +108,11 @@ if __name__ == "__main__":
     parser.add_argument('fastq_file', help="FASTQ file, not compressed, with sequences;", type=argparse.FileType('r'))
     parser.add_argument('cutadapt_info_file', help="Cutadapt info-file obtained with the argument --info-file;", type=argparse.FileType('r'))
     parser.add_argument('output_file', help="Output file with saved sequences;", type=argparse.FileType('w'))
+    parser.add_argument('--reverse_complement', '-r', required=False, help="Reverse-complement sequences that begin with a reverse primer. yes or no;", type=str)
     parser.add_argument('--output_log', '-i', required=False, help="Output log file with id of sequences not saved;", type=argparse.FileType('w'), default=sys.stdout)
     parser.add_argument('--output_counts', '-c', required=False, help="Output log file with counts of sequences by category;", type=argparse.FileType('a'), default=sys.stdout)
     args = parser.parse_args()
     
     file_dict = parse_fastq(args.fastq_file)
     seq_good_primers, seq_wrong_primers = parse_cutadapt_log(args.cutadapt_info_file)
-    write_output_files(file_dict, seq_good_primers, seq_wrong_primers, args.output_file, args.output_log, args.output_counts)
+    write_output_files(file_dict, seq_good_primers, seq_wrong_primers, args.output_file, args.reverse_complement, args.output_log, args.output_counts)
