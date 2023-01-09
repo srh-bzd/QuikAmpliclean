@@ -87,7 +87,7 @@ if __name__ == "__main__":
     parser.add_argument('min_length', help="Minimum length of a sequence to be keep;", type=int)
     parser.add_argument('max_length', help="Maximum length of a sequence to be keep;", type=int)
     parser.add_argument('output_file', help="Output file with saved sequences;", type=argparse.FileType('w'))
-    parser.add_argument('--output_log', '-i', required=False, help="Output log file with id of sequences not saved;", type=argparse.FileType('w'), default=sys.stdout)
+    parser.add_argument('--output_log', '-i', required=False, help="Output log file with id of sequences not saved;", type=argparse.FileType('a'), default=sys.stdout)
     parser.add_argument('--output_counts', '-c', required=False, help="Output log file with counts of sequences by category;", type=argparse.FileType('a'), default=sys.stdout)
     args = parser.parse_args()
     
